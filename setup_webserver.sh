@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 웹서버 설치 및 설정 스크립트
+# 웹서버 설치 및 설정 스크립트 (안정성 개선 버전)
 # 이 스크립트는 Azure VM에서 자동으로 실행되어 Python 웹 계산기를 설치합니다.
 
 set -e
@@ -16,7 +16,8 @@ touch $LOGFILE
 
 # 로그 함수 정의
 log() {
-    echo "$1" | tee -a $LOGFILE
+    # ISO 8601 형식의 타임스탬프 추가
+    echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $1" | tee -a $LOGFILE
 }
 
 log "=== 웹서버 설치 시작 ==="
@@ -24,9 +25,23 @@ log "시작 시간: $(date)"
 log "MySQL 사용자: $MYSQL_USERNAME"
 log "스크립트 URI: $SCRIPTS_BASE_URI"
 
-# 시스템 업데이트
-log "시스템 업데이트 중..."
-apt-get update -y
+# --- [수정 1: 안정적인 시스템 업데이트] ---
+# 다른 apt 프로세스가 끝날 때까지 대기 (unattended-upgrades 등)
+while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+   log "다른 apt/dpkg 프로세스가 끝날 때까지 대기 중..."
+   sleep 10
+done
+
+# 네트워크 불안정에 대비하여 apt-get update 재시도 로직 추가
+log "시스템 업데이트 중 (최대 3회 시도)..."
+for i in 1 2 3; do
+  apt-get update -y && break  # 성공하면 루프 탈출
+  log "apt-get update 실패. 15초 후 재시도... (시도 $i/3)"
+  sleep 15
+done
+
+# 시스템 업그레이드
+log "시스템 업그레이드 중..."
 apt-get upgrade -y
 
 # 필요한 패키지 설치
@@ -38,19 +53,37 @@ log "MySQL 서버 설정 중..."
 systemctl start mysql
 systemctl enable mysql
 
+# --- [수정 2: MySQL 서비스 안정화 대기] ---
+log "MySQL 서비스가 완전히 시작될 때까지 대기 중..."
+for i in {1..10}; do
+    if mysqladmin ping > /dev/null 2>&1; then
+        log "MySQL 서버 준비 완료."
+        break
+    fi
+    log "MySQL 서버 대기 중... ($i/10)"
+    sleep 3
+done
+if ! mysqladmin ping > /dev/null 2>&1; then
+    log "MySQL 서버 시작 실패."
+    exit 1
+fi
+
+
 # MySQL root 비밀번호 설정 및 보안 설정
+log "MySQL 보안 설정 적용 중..."
 mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_PASSWORD';"
-mysql -u root -p$MYSQL_PASSWORD -e "DELETE FROM mysql.user WHERE User='';"
-mysql -u root -p$MYSQL_PASSWORD -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
-mysql -u root -p$MYSQL_PASSWORD -e "DROP DATABASE IF EXISTS test;"
-mysql -u root -p$MYSQL_PASSWORD -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
-mysql -u root -p$MYSQL_PASSWORD -e "FLUSH PRIVILEGES;"
+mysql -u root -p"$MYSQL_PASSWORD" -e "DELETE FROM mysql.user WHERE User='';"
+mysql -u root -p"$MYSQL_PASSWORD" -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');"
+mysql -u root -p"$MYSQL_PASSWORD" -e "DROP DATABASE IF EXISTS test;"
+mysql -u root -p"$MYSQL_PASSWORD" -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';"
+mysql -u root -p"$MYSQL_PASSWORD" -e "FLUSH PRIVILEGES;"
 
 # 애플리케이션 사용자 및 데이터베이스 생성
-log "애플리케이션 데이터베이스 사용자 생성 중..."
-mysql -u root -p$MYSQL_PASSWORD -e "CREATE USER '$MYSQL_USERNAME'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD';"
-mysql -u root -p$MYSQL_PASSWORD -e "GRANT ALL PRIVILEGES ON calculator_db.* TO '$MYSQL_USERNAME'@'localhost';"
-mysql -u root -p$MYSQL_PASSWORD -e "FLUSH PRIVILEGES;"
+log "애플리케이션 데이터베이스 및 사용자 생성 중..."
+mysql -u root -p"$MYSQL_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS calculator_db;"
+mysql -u root -p"$MYSQL_PASSWORD" -e "CREATE USER '$MYSQL_USERNAME'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD';"
+mysql -u root -p"$MYSQL_PASSWORD" -e "GRANT ALL PRIVILEGES ON calculator_db.* TO '$MYSQL_USERNAME'@'localhost';"
+mysql -u root -p"$MYSQL_PASSWORD" -e "FLUSH PRIVILEGES;"
 
 # 애플리케이션 디렉토리 생성
 log "애플리케이션 디렉토리 생성 중..."
@@ -87,11 +120,11 @@ pip install -r requirements.txt
 
 # 데이터베이스 초기화
 log "데이터베이스 초기화 중..."
-mysql -u root -p$MYSQL_PASSWORD < database_init.sql
+mysql -u root -p"$MYSQL_PASSWORD" < database_init.sql
 
 # 환경변수 설정을 위한 서비스 파일 생성
 log "시스템 서비스 설정 중..."
-cat > /etc/systemd/system/calculator.service << 'EOF'
+cat > /etc/systemd/system/calculator.service << EOF
 [Unit]
 Description=Calculator Web Application
 After=network.target mysql.service
@@ -99,9 +132,11 @@ After=network.target mysql.service
 [Service]
 Type=simple
 User=www-data
+Group=www-data
 WorkingDirectory=/var/www/calculator
-Environment=MYSQL_USER=MYSQL_USERNAME_PLACEHOLDER
-Environment=MYSQL_PASSWORD=MYSQL_PASSWORD_PLACEHOLDER
+# 환경변수는 실제 값으로 직접 주입합니다.
+Environment="MYSQL_USER=$MYSQL_USERNAME"
+Environment="MYSQL_PASSWORD=$MYSQL_PASSWORD"
 ExecStart=/var/www/calculator/venv/bin/python app.py
 Restart=always
 
@@ -109,15 +144,12 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-# 서비스 파일에서 플레이스홀더를 실제 값으로 교체
-sed -i "s/MYSQL_USERNAME_PLACEHOLDER/$MYSQL_USERNAME/g" /etc/systemd/system/calculator.service
-sed -i "s/MYSQL_PASSWORD_PLACEHOLDER/$MYSQL_PASSWORD/g" /etc/systemd/system/calculator.service
-
 # 서비스 권한 설정
 chown -R www-data:www-data $APP_DIR
-chmod +x app.py
+# app.py는 실행 권한이 필요 없습니다. python 인터프리터가 실행합니다.
 
 # 서비스 시작 및 활성화
+log "서비스 데몬 리로드 및 계산기 서비스 시작..."
 systemctl daemon-reload
 systemctl start calculator
 systemctl enable calculator
@@ -128,9 +160,11 @@ cat > /etc/nginx/sites-available/calculator << 'EOF'
 server {
     listen 80;
     server_name _;
-    
+
     location / {
-        proxy_pass http://127.0.0.1:80;
+        # --- [수정 3: 프록시 포트 변경] ---
+        # Nginx(80) -> Python App(5000)으로 요청 전달
+        proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -144,6 +178,7 @@ rm -f /etc/nginx/sites-enabled/default
 ln -s /etc/nginx/sites-available/calculator /etc/nginx/sites-enabled/
 
 # Nginx 설정 테스트 및 재시작
+log "Nginx 설정 테스트 및 재시작..."
 nginx -t
 systemctl restart nginx
 systemctl enable nginx
@@ -151,10 +186,9 @@ systemctl enable nginx
 # 방화벽 설정 (UFW가 설치된 경우)
 if command -v ufw > /dev/null; then
     log "방화벽 설정 중..."
-    ufw allow 22/tcp
-    ufw allow 80/tcp
-    ufw allow 3306/tcp
-    echo "y" | ufw enable
+    ufw allow 22/tcp  # SSH
+    ufw allow 80/tcp  # HTTP
+    ufw --force enable
 fi
 
 # 서비스 상태 확인
