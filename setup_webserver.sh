@@ -108,7 +108,7 @@ wget "$SCRIPTS_BASE_URI/static/calculator.js" -O static/calculator.js
 
 log "Python 가상환경 설정 중..."
 python3 -m venv venv
-source venv/bin/activate
+. venv/bin/activate
 
 log "Python 패키지 설치 중..."
 pip install --upgrade pip
