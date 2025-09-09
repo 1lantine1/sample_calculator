@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>웹 계산기</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>웹 계산기</h1>
+        
+        <div class="calculator">
+            <div class="display">
+                <input type="text" id="result" class="result-display" readonly placeholder="0">
+            </div>
+            
+            <div class="buttons">
+                <div class="row">
+                    <button class="btn clear" onclick="clearDisplay()">C</button>
+                    <button class="btn operator" onclick="deleteLast()">⌫</button>
+                    <button class="btn operator" onclick="appendToDisplay('/')">/</button>
+                    <button class="btn operator" onclick="appendToDisplay('*')">×</button>
+                </div>
+                
+                <div class="row">
+                    <button class="btn number" onclick="appendToDisplay('7')">7</button>
+                    <button class="btn number" onclick="appendToDisplay('8')">8</button>
+                    <button class="btn number" onclick="appendToDisplay('9')">9</button>
+                    <button class="btn operator" onclick="appendToDisplay('-')">-</button>
+                </div>
+                
+                <div class="row">
+                    <button class="btn number" onclick="appendToDisplay('4')">4</button>
+                    <button class="btn number" onclick="appendToDisplay('5')">5</button>
+                    <button class="btn number" onclick="appendToDisplay('6')">6</button>
+                    <button class="btn operator" onclick="appendToDisplay('+')">+</button>
+                </div>
+                
+                <div class="row">
+                    <button class="btn number" onclick="appendToDisplay('1')">1</button>
+                    <button class="btn number" onclick="appendToDisplay('2')">2</button>
+                    <button class="btn number" onclick="appendToDisplay('3')">3</button>
+                    <button class="btn equals" onclick="calculate()" rowspan="2">=</button>
+                </div>
+                
+                <div class="row">
+                    <button class="btn number wide" onclick="appendToDisplay('0')">0</button>
+                    <button class="btn number" onclick="appendToDisplay('.')">.</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="navigation">
+            <a href="/history" class="nav-link">계산 기록 보기</a>
+        </div>
+        
+        <div id="error-message" class="error-message"></div>
+    </div>
+    
+    <script src="{{ url_for('static', filename='calculator.js') }}"></script>
+</body>
+</html>

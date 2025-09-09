@@ -1,0 +1,186 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "koreacentral",
+      "metadata": {
+        "description": "Azure location for the resources."
+      }
+    },
+    "vmName": {
+      "type": "string",
+      "defaultValue": "my-web-vm",
+      "metadata": {
+        "description": "Name of the Virtual Machine."
+      }
+    },
+    "adminUsername": {
+      "type": "string",
+      "defaultValue": "lantine",
+      "metadata": {
+        "description": "Administrator user name."
+      }
+    },
+    "adminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Administrator password."
+      }
+    },
+    "allowedIpPrefix": {
+      "type": "string",
+      "defaultValue": "211.33.181.0/24",
+      "metadata": {
+        "description": "IP address range allowed to access the web server and SSH."
+      }
+    },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2s_v3",
+      "metadata": {
+        "description": "Virtual machine size."
+      }
+    },
+    "mysqlUsername": {
+      "type": "string",
+      "defaultValue": "lantine",
+      "metadata": {
+        "description": "MySQL database username."
+      }
+    },
+    "mysqlPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "MySQL database password."
+      }
+    },
+    "scriptsBaseUri": {
+      "type": "string",
+      "metadata": {
+        "description": "Base URI where the script files are located (e.g., a public GitHub raw content URL)."
+      }
+    }
+  },
+  "variables": {
+    "vnetName": "[concat(parameters('vmName'), '-vnet')]",
+    "subnetName": "[concat(parameters('vmName'), '-subnet')]",
+    "publicIpName": "[concat(parameters('vmName'), '-pip')]",
+    "nicName": "[concat(parameters('vmName'), '-nic')]",
+    "nsgName": "[concat(parameters('vmName'), '-nsg')]",
+    "vmImagePublisher": "Canonical",
+    "vmImageOffer": "0001-com-ubuntu-server-jammy",
+    "vmImageSku": "22_04-lts",
+    "setupScriptFile": "setup_webserver.sh"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2021-02-01",
+      "name": "[variables('nsgName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "securityRules": [
+          { "name": "Allow_SSH", "properties": { "priority": 100, "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "sourceAddressPrefix": "[parameters('allowedIpPrefix')]", "sourcePortRange": "*", "destinationAddressPrefix": "*", "destinationPortRange": "22" }},
+          { "name": "Allow_Web", "properties": { "priority": 110, "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "sourceAddressPrefix": "[parameters('allowedIpPrefix')]", "sourcePortRange": "*", "destinationAddressPrefix": "*", "destinationPortRange": "80" }},
+          { "name": "Allow_MySQL", "properties": { "priority": 120, "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "sourceAddressPrefix": "[parameters('allowedIpPrefix')]", "sourcePortRange": "*", "destinationAddressPrefix": "*", "destinationPortRange": "3306" }}
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2021-02-01",
+      "name": "[variables('vnetName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": { "addressPrefixes": [ "10.0.0.0/16" ]},
+        "subnets": [{ "name": "[variables('subnetName')]", "properties": { "addressPrefix": "10.0.0.0/24" }}]
+      }
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2021-02-01",
+      "name": "[variables('publicIpName')]",
+      "location": "[parameters('location')]",
+      "sku": { "name": "Standard" },
+      "properties": { "publicIPAllocationMethod": "Static" }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2021-02-01",
+      "name": "[variables('nicName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[variables('vnetName')]",
+        "[variables('nsgName')]",
+        "[variables('publicIpName')]"
+      ],
+      "properties": {
+        "ipConfigurations": [{
+          "name": "ipconfig1",
+          "properties": {
+            "privateIPAllocationMethod": "Dynamic",
+            "publicIPAddress": { "id": "[resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))]" },
+            "subnet": { "id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('vnetName'), variables('subnetName'))]" }
+          }
+        }],
+        "networkSecurityGroup": { "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]" }
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2021-07-01",
+      "name": "[parameters('vmName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [ "[variables('nicName')]" ],
+      "properties": {
+        "hardwareProfile": { "vmSize": "[parameters('vmSize')]" },
+        "osProfile": {
+          "computerName": "[parameters('vmName')]",
+          "adminUsername": "[parameters('adminUsername')]",
+          "adminPassword": "[parameters('adminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('vmImagePublisher')]",
+            "offer": "[variables('vmImageOffer')]",
+            "sku": "[variables('vmImageSku')]",
+            "version": "latest"
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [{ "id": "[resourceId('Microsoft.Network/networkInterfaces', variables('nicName'))]" }]
+        },
+        "diagnosticsProfile": { "bootDiagnostics": { "enabled": true }}
+      }
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines/extensions",
+      "apiVersion": "2021-07-01",
+      "name": "[concat(parameters('vmName'), '/customScriptExtension')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [ "[resourceId('Microsoft.Compute/virtualMachines', parameters('vmName'))]" ],
+      "properties": {
+        "publisher": "Microsoft.Azure.Extensions",
+        "type": "CustomScript",
+        "typeHandlerVersion": "2.0",
+        "autoUpgradeMinorVersion": true,
+        "settings": {
+            "fileUris": [
+                "[concat(parameters('scriptsBaseUri'), '/', variables('setupScriptFile'))]"
+            ]
+        },
+        "protectedSettings": {
+          "commandToExecute": "[concat('sh ', variables('setupScriptFile'), ' \"', parameters('mysqlUsername'), '\" \"', parameters('mysqlPassword'), '\" \"', parameters('scriptsBaseUri'), '\"')]"
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "publicIpAddress": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', variables('publicIpName'))).ipAddress]"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>계산 기록 - 웹 계산기</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>계산 기록</h1>
+        
+        <div class="history-container">
+            {% if calculations %}
+                <div class="history-list">
+                    {% for calc in calculations %}
+                    <div class="history-item">
+                        <div class="expression">{{ calc[0] }}</div>
+                        <div class="result">= {{ calc[1] }}</div>
+                        <div class="timestamp">{{ calc[2].strftime('%Y-%m-%d %H:%M:%S') }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="no-history">
+                    <p>아직 계산 기록이 없습니다.</p>
+                </div>
+            {% endif %}
+        </div>
+        
+        <div class="navigation">
+            <a href="/" class="nav-link">계산기로 돌아가기</a>
+        </div>
+    </div>
+</body>
+</html>
